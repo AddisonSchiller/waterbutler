@@ -9,7 +9,9 @@ from waterbutler.core import exceptions
 
 from waterbutler.auth.osf import settings
 
+import logging
 
+logger = logging.getLogger(__name__)
 JWE_KEY = jwe.kdf(settings.JWE_SECRET.encode(), settings.JWE_SALT.encode())
 
 
@@ -41,6 +43,8 @@ class OsfAuthHandler(auth.BaseAuthHandler):
         return query_params
 
     async def make_request(self, params, headers, cookies):
+        # logger.info(params)
+        # logger.info(headers)
         try:
             response = await aiohttp.request(
                 'get',
@@ -61,8 +65,12 @@ class OsfAuthHandler(auth.BaseAuthHandler):
 
         try:
             raw = await response.json()
+
             signed_jwt = jwe.decrypt(raw['payload'].encode(), JWE_KEY)
             data = jwt.decode(signed_jwt, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM, options={'require_exp': True})
+
+            logger.info("data")
+            logger.info(data)
             return data['data']
         except (jwt.InvalidTokenError, KeyError):
             raise exceptions.AuthError(data, code=response.status)
@@ -104,6 +112,9 @@ class OsfAuthHandler(auth.BaseAuthHandler):
 
         if 'Authorization' in request.headers:
             headers['Authorization'] = request.headers['Authorization']
+
+            logger.info("authorization from get")
+            logger.info(request.headers['Authorization'])
 
         cookie = request.query_arguments.get('cookie')
         if cookie:

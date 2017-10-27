@@ -3,6 +3,10 @@ import json
 import uuid
 import shutil
 import hashlib
+import itertools
+from urllib import parse
+import logging
+import furl
 
 from waterbutler.core import utils
 from waterbutler.core import signing
@@ -22,6 +26,8 @@ from waterbutler.providers.osfstorage.metadata import OsfStorageRevisionMetadata
 
 QUERY_METHODS = ('GET', 'DELETE')
 
+logger = logging.getLogger(__name__)
+
 
 class OSFStorageProvider(provider.BaseProvider):
     """Provider for the Open Science Framework's cloud storage service.
@@ -40,9 +46,11 @@ class OSFStorageProvider(provider.BaseProvider):
 
     def __init__(self, auth, credentials, settings):
         super().__init__(auth, credentials, settings)
+
         self.nid = settings['nid']
         self.root_id = settings['rootId']
         self.BASE_URL = settings['baseUrl']
+        self.BASE_V2_URL = 'http://192.168.168.167:8000/v2/nodes/%s/files/providers/osfstorage/' % self.nid
         self.provider_name = settings['storage'].get('provider')
 
         self.parity_settings = settings.get('parity')
@@ -150,20 +158,27 @@ class OSFStorageProvider(provider.BaseProvider):
         if dest_path.identifier:
             created = False
             await dest_provider.delete(dest_path)
-
+        url = self.build_v2_url('file_metadata')
+        data = json.dumps({
+            'data': {
+                'type': 'file_metadata',
+                'attributes': {
+                    'action': 'move',
+                    'destination_parent': dest_path.parent.identifier,
+                    'destination_node': dest_provider.nid,
+                    'source': src_path.identifier,
+                    'name': dest_path.name,
+                }
+            }
+        })
+        logger.info(data)
+        logger.info("SDFLKJSD:FLKJSDF:LKJSDLF")
         async with self.signed_request(
             'POST',
-            self.build_url('hooks', 'move'),
-            data=json.dumps({
-                'user': self.auth['id'],
-                'source': src_path.identifier,
-                'destination': {
-                    'name': dest_path.name,
-                    'node': dest_provider.nid,
-                    'parent': dest_path.parent.identifier
-                }
-            }),
-            headers={'Content-Type': 'application/json'},
+            url,
+            data=data,
+            headers={'Content-Type': 'application/json',
+            'Authorization': 'Basic YWNzY2hpbGxlckBnbWFpbC5jb206'},
             expects=(200, 201)
         ) as resp:
             data = await resp.json()
@@ -187,7 +202,6 @@ class OSFStorageProvider(provider.BaseProvider):
             'POST',
             self.build_url('hooks', 'copy'),
             data=json.dumps({
-                'user': self.auth['id'],
                 'source': src_path.identifier,
                 'destination': {
                     'name': dest_path.name,
@@ -208,6 +222,23 @@ class OSFStorageProvider(provider.BaseProvider):
         folder_meta.children = await dest_provider._children_metadata(dest_path)
 
         return folder_meta, created
+
+    def build_v2_url(self, *segments, **query):
+        url = furl.furl(self.BASE_V2_URL)
+        # Filters return generators
+        # Cast to list to force "spin" it
+        url.path.segments = list(filter(
+            lambda segment: segment,
+            map(
+                # Furl requires everything to be quoted or not, no mixtures allowed
+                # prequote everything so %signs don't break everything
+                lambda segment: parse.quote(segment.strip('/')),
+                # Include any segments of the original url, effectively list+list but returns a generator
+                itertools.chain(url.path.segments, segments)
+            )
+        ))
+        url.args = query
+        return url.url
 
     def build_signed_url(self, method, url, data=None, params=None, ttl=100, **kwargs):
         signer = signing.Signer(settings.HMAC_SECRET, settings.HMAC_ALGORITHM)
